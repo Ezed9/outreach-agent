@@ -1,0 +1,10 @@
+google-genai
+groq
+openai
+python-dotenv
+httpx
+html2text
+rich
+imap_tools
+dnspython
+requests

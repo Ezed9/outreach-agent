@@ -1,0 +1,19 @@
+# Environment
+.env
+
+# Runtime state (generated, do not commit)
+outreach_tracker.json
+.sent_count.json
+.warmup_start
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# OS
+.DS_Store
