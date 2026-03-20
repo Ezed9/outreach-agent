@@ -5,6 +5,7 @@ from outreach.tracker import (
     load_tracker, save_tracker, upsert_lead,
     mark_sent, mark_replied, mark_skipped,
     get_due_followups, get_pending, print_status,
+    get_campaigns, print_campaigns,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "load_tracker", "save_tracker", "upsert_lead",
     "mark_sent", "mark_replied", "mark_skipped",
     "get_due_followups", "get_pending", "print_status",
+    "get_campaigns", "print_campaigns",
 ]

@@ -5,7 +5,9 @@ Usage:
   python main.py leads_gyms_sydney.csv        # Draft + review + send
   python main.py leads_*.csv                  # Multiple CSVs
   python main.py --follow-ups                 # Send due follow-ups
+  python main.py --follow-ups --campaign gyms # Follow-ups for one campaign only
   python main.py --status                     # Show tracker table
+  python main.py --campaigns                  # Show campaign summary
   python main.py --verify leads_gyms.csv      # Verify emails before sending
   python main.py --check-replies              # Check Gmail for new replies
 """
@@ -62,8 +64,11 @@ def cmd_send(csv_paths: list[str]):
     all_leads = []
     for path in csv_paths:
         for filepath in glob.glob(path):
+            campaign = Path(filepath).stem  # e.g. "filtered_leads_gyms_sydney_2026-03-19"
             leads = load_leads_from_csv(filepath)
             console.print(f"[cyan]Loaded {len(leads)} leads from {filepath}[/cyan]")
+            for lead in leads:
+                lead["campaign"] = campaign
             all_leads.extend(leads)
 
     if not all_leads:
@@ -73,7 +78,7 @@ def cmd_send(csv_paths: list[str]):
     # Filter to only new leads (not already in tracker)
     new_leads = []
     for lead in all_leads:
-        rec = upsert_lead(tracker, lead["company_name"], lead["website"], lead["email"])
+        rec = upsert_lead(tracker, lead["company_name"], lead["website"], lead["email"], campaign=lead.get("campaign", ""))
         if rec["status"] == "pending":
             new_leads.append(lead)
 
@@ -106,9 +111,11 @@ def cmd_send(csv_paths: list[str]):
                 "pitch": pitch,
                 "subject": email_draft["subject"],
                 "body": email_draft["body"],
+                "signals": research.get("signals", []),
+                "warnings": email_draft.get("warnings", []),
             })
             # Update tracker with pitch decision and discovered email
-            rec = upsert_lead(tracker, lead["company_name"], lead["website"], lead["email"], pitch)
+            rec = upsert_lead(tracker, lead["company_name"], lead["website"], lead["email"], pitch, campaign=lead.get("campaign", ""))
             rec["pitch"] = pitch
             if to_email and not rec["to_email"]:
                 rec["to_email"] = to_email
@@ -147,7 +154,7 @@ def cmd_send(csv_paths: list[str]):
     console.print(f"\n[bold green]✓ {sent_count} emails sent.[/bold green]")
 
 
-def cmd_followups():
+def cmd_followups(campaign: str = ""):
     from outreach import (
         load_tracker, save_tracker, mark_sent,
         get_due_followups, send_email, remaining_today,
@@ -156,7 +163,9 @@ def cmd_followups():
     from outreach.reviewer import review_batch
 
     tracker = load_tracker()
-    due = get_due_followups(tracker)
+    due = get_due_followups(tracker, campaign=campaign)
+    if campaign:
+        console.print(f"[cyan]Campaign filter: {campaign}[/cyan]")
 
     if not due:
         console.print("[green]No follow-ups due today.[/green]")
@@ -184,6 +193,7 @@ def cmd_followups():
                 "pitch": rec.get("pitch", ""),
                 "subject": draft["subject"],
                 "body": draft["body"],
+                "warnings": draft.get("warnings", []),
                 "_email_num": email_num,
             })
         except Exception as e:
@@ -204,6 +214,15 @@ def cmd_followups():
 
     save_tracker(tracker)
     console.print(f"\n[bold green]✓ {sent_count} follow-up(s) sent.[/bold green]")
+
+
+def cmd_campaigns():
+    from outreach.tracker import load_tracker, print_campaigns
+    tracker = load_tracker()
+    if not tracker:
+        console.print("[yellow]No outreach tracked yet. Run python main.py <leads.csv>[/yellow]")
+        return
+    print_campaigns(tracker)
 
 
 def cmd_status():
@@ -283,10 +302,20 @@ def main():
         console.print(__doc__)
         return
 
+    # Parse --campaign <name> if present
+    campaign_filter = ""
+    if "--campaign" in args:
+        idx = args.index("--campaign")
+        if idx + 1 < len(args):
+            campaign_filter = args[idx + 1]
+            args = args[:idx] + args[idx + 2:]
+
     if "--status" in args:
         cmd_status()
+    elif "--campaigns" in args:
+        cmd_campaigns()
     elif "--follow-ups" in args or "--followups" in args:
-        cmd_followups()
+        cmd_followups(campaign=campaign_filter)
     elif "--check-replies" in args:
         cmd_check_replies()
     elif "--verify" in args:

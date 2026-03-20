@@ -7,6 +7,7 @@ Daily send count is persisted to .sent_count.json so restarts don't reset the li
 """
 import json
 import os
+import re
 import smtplib
 import time
 from datetime import date
@@ -14,6 +15,9 @@ from email.mime.text import MIMEText
 from email.utils import make_msgid, formatdate
 
 MAX_PER_DAY = 30
+
+# Box-drawing chars that indicate corrupted copy-paste from terminal
+_BOX_CHARS = re.compile(r'[│─┌┐└┘╭╮╰╯┬┴├┤┼╔╗╚╝║═]')
 _COUNT_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".sent_count.json")
 
 
@@ -51,6 +55,14 @@ def send_email(to: str, subject: str, body: str) -> str:
         RuntimeError if daily limit hit or credentials missing
     """
     _check_daily_limit()
+
+    # Pre-send validation — catch corrupted emails before they go out
+    if _BOX_CHARS.search(subject) or _BOX_CHARS.search(body):
+        raise RuntimeError(f"Email to {to} contains terminal box-drawing characters — aborting send. Review and re-draft.")
+    if len(subject) < 3 or len(subject) > 200:
+        raise RuntimeError(f"Email to {to} has suspicious subject length ({len(subject)} chars) — aborting send.")
+    if len(body) < 20:
+        raise RuntimeError(f"Email to {to} has suspiciously short body ({len(body)} chars) — aborting send.")
 
     gmail_address = os.environ.get("GMAIL_ADDRESS", "")
     app_password = os.environ.get("GMAIL_APP_PASSWORD", "")

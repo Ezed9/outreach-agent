@@ -136,4 +136,35 @@ def research_business(url: str, company_name: str = "") -> dict:
     if not any(kw in full_text.lower() for kw in automation_keywords):
         result["signals"].append("no automation tools detected")
 
+    # Technology signals
+    full_lower = full_text.lower()
+    if "wordpress" in full_lower or "theme by" in full_lower or "wp-content" in full_lower:
+        result["signals"].append("wordpress site — may need redesign")
+    if "wix" in full_lower or "wixsite" in full_lower:
+        result["signals"].append("wix template site — limited customization")
+    if "squarespace" in full_lower:
+        result["signals"].append("squarespace template site")
+    if "shopify" in full_lower:
+        result["signals"].append("shopify store")
+
+    # Content freshness — check copyright year
+    copyright_match = re.search(r'©\s*(\d{4})', full_text)
+    if copyright_match:
+        year = int(copyright_match.group(1))
+        if year < 2024:
+            result["signals"].append(f"copyright outdated ({year}) — site may be neglected")
+
+    # Growth signals
+    if "hiring" in full_lower or "careers" in full_lower or "join our team" in full_lower:
+        result["signals"].append("actively hiring — business is growing")
+    if "new location" in full_lower or "now open" in full_lower or "grand opening" in full_lower:
+        result["signals"].append("recently expanded or new location")
+    if "coming soon" in full_lower:
+        result["signals"].append("has coming-soon features — actively developing")
+
+    # Review platform presence
+    review_platforms = ["google review", "yelp", "trustpilot", "productreview"]
+    if any(rp in full_lower for rp in review_platforms):
+        result["signals"].append("has review platform presence")
+
     return result

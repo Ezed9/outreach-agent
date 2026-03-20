@@ -18,13 +18,14 @@ def check_for_replies(message_ids: list[str]) -> list[str]:
     Returns:
         List of Message-IDs that received at least one reply
     """
-    gmail_address = os.environ["GMAIL_ADDRESS"]
-    gmail_password = os.environ["GMAIL_APP_PASSWORD"]
+    # IMAP may use a different account (e.g. personal Gmail that forwards from sending domain)
+    imap_user = os.environ.get("GMAIL_IMAP_USER") or os.environ["GMAIL_ADDRESS"]
+    gmail_password = os.environ.get("GMAIL_IMAP_PASSWORD") or os.environ["GMAIL_APP_PASSWORD"]
     imap_host = os.environ.get("GMAIL_IMAP_HOST", "imap.gmail.com")
 
     replied_ids = []
     try:
-        with MailBox(imap_host).login(gmail_address, gmail_password) as mailbox:
+        with MailBox(imap_host).login(imap_user, gmail_password) as mailbox:
             for msg_id in message_ids:
                 # Search by In-Reply-To header (most reliable)
                 try:

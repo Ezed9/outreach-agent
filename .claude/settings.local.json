@@ -4,7 +4,15 @@
       "Bash(git init:*)",
       "Bash(git remote:*)",
       "Bash(git branch:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:arkhe-tau.vercel.app)",
+      "WebFetch(domain:max-web-portfolio.vercel.app)",
+      "WebFetch(domain:www.cloudflare.com)",
+      "WebFetch(domain:porkbun.com)",
+      "WebSearch",
+      "WebFetch(domain:domcomp.com)",
+      "WebFetch(domain:tldspy.com)"
     ]
   }
 }
