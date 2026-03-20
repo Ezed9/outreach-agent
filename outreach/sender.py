@@ -1,7 +1,8 @@
 """
-Gmail SMTP sender — plain text only, rate-limited to 30/day, 2s between sends.
+SMTP sender — plain text only, rate-limited to 30/day, 2s between sends.
 Stores Message-ID for reply threading.
 
+Supports Gmail (port 465/SSL) and Brevo (port 587/TLS) automatically.
 Daily send count is persisted to .sent_count.json so restarts don't reset the limit.
 """
 import json
@@ -68,9 +69,17 @@ def send_email(to: str, subject: str, body: str) -> str:
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = message_id
 
-    with smtplib.SMTP_SSL(smtp_host, 465) as server:
-        server.login(gmail_address, app_password)
-        server.sendmail(gmail_address, [to], msg.as_string())
+    # Brevo uses port 587 (STARTTLS), Gmail uses 465 (SSL)
+    if "brevo.com" in smtp_host:
+        brevo_user = os.environ.get("BREVO_SMTP_USER", gmail_address)
+        with smtplib.SMTP(smtp_host, 587) as server:
+            server.starttls()
+            server.login(brevo_user, app_password)
+            server.sendmail(gmail_address, [to], msg.as_string())
+    else:
+        with smtplib.SMTP_SSL(smtp_host, 465) as server:
+            server.login(gmail_address, app_password)
+            server.sendmail(gmail_address, [to], msg.as_string())
 
     _save_count(_load_count() + 1)
 

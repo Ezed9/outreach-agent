@@ -31,18 +31,24 @@ def check_gmail():
     pwd = os.environ.get("GMAIL_APP_PASSWORD", "")
     host = os.environ.get("GMAIL_SMTP_HOST", "smtp.gmail.com")
     if not addr or not pwd:
-        print("  ✗ Gmail credentials not set")
+        print("  ✗ SMTP credentials not set")
         return False
     try:
-        with smtplib.SMTP_SSL(host, 465, timeout=10) as server:
-            server.login(addr, pwd)
-        print(f"  ✓ Gmail SMTP login OK ({addr})")
+        if "brevo.com" in host:
+            login_user = os.environ.get("BREVO_SMTP_USER", addr)
+            with smtplib.SMTP(host, 587, timeout=10) as server:
+                server.starttls()
+                server.login(login_user, pwd)
+        else:
+            with smtplib.SMTP_SSL(host, 465, timeout=10) as server:
+                server.login(addr, pwd)
+        print(f"  ✓ SMTP login OK ({addr} via {host})")
         return True
     except smtplib.SMTPAuthenticationError:
-        print("  ✗ Gmail auth failed. Check GMAIL_APP_PASSWORD (needs App Password, not regular password)")
+        print("  ✗ SMTP auth failed. Check GMAIL_APP_PASSWORD")
         return False
     except Exception as e:
-        print(f"  ✗ Gmail SMTP error: {e}")
+        print(f"  ✗ SMTP error: {e}")
         return False
 
 

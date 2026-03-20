@@ -51,7 +51,7 @@ You are pitching: {pitch_type}
   3. One line: proof or outcome (e.g. "Helped a Sydney plumber get 3 new bookings in week 1")
   4. Soft CTA: "Worth a quick chat this week?"
 - NO spam words: free, guaranteed, risk-free, limited time, act now, click here
-- Sign off with just: {your_name}
+- Sign off with: {sign_off}
 - Do NOT include your email or phone in the body
 
 ## Output Format
@@ -68,6 +68,9 @@ Previous email sent to {company_name}:
 Subject: {prev_subject}
 Body: {prev_body}
 
+Pitch type: {pitch_type}
+{url_instruction}
+
 Rules:
 - 40–60 words maximum
 - Different angle from email 1 — don't repeat the same pitch
@@ -76,7 +79,7 @@ Rules:
 - Email 4: "closing the loop" — tell them you won't follow up again after this
 - Email 5: final permission-based close — "would it be ok to reach out again in a few months?"
 - Lowercase subject starting with "re:" to appear as reply thread
-- Sign: {your_name}
+- Sign: {sign_off}
 
 Return ONLY valid JSON:
 {{
@@ -111,25 +114,34 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
     content_summary = (research.get("main_content", "") + "\n" + research.get("sub_pages", ""))[:1200]
     signals = ", ".join(research.get("signals", [])) or "none"
 
-    pitch_context = (
-        "You are offering to BUILD THEM A PROFESSIONAL WEBSITE. "
-        "They currently have no website or a very basic one. "
-        "Focus on: more customers finding them online, credibility, bookings/enquiries coming to them."
-        if pitch == "website"
-        else
-        "You are offering AI AUTOMATION for their business. "
-        "They have a website but manual processes. "
-        "Focus on: saving time, auto-booking, automatic replies to enquiries, never missing a lead."
-    )
+    if pitch == "website":
+        sign_off = f"{your_name} — Max Web"
+        pitch_type = "Build them a professional website"
+        pitch_context = (
+            "You're reaching out on behalf of Max Web. Mention 'I run Max Web' once naturally in the email. "
+            "Focus on: getting found on Google, looking credible online, converting visitors to bookings and enquiries. "
+            "Proof: generate a plausible outcome for a similar type of business (no specific company names). "
+            "Do NOT include any URLs or links — email 1 must be completely link-free."
+        )
+    else:
+        sign_off = f"{your_name} — Arkhe AI"
+        pitch_type = "AI automation for their business"
+        pitch_context = (
+            "You're reaching out on behalf of Arkhe AI. Mention 'my team at Arkhe AI' once naturally in the email. "
+            "Focus on: saving hours on manual work, auto-booking, AI-powered customer replies, never missing a lead. "
+            "Proof: generate a plausible outcome for a similar type of business (no specific company names). "
+            "Do NOT include any URLs or links — email 1 must be completely link-free."
+        )
 
     prompt = DRAFT_EMAIL_PROMPT.format(
         your_name=your_name,
+        sign_off=sign_off,
         company_name=company_name,
         website=website or "none",
         description=description,
         signals=signals,
         content_summary=content_summary,
-        pitch_type="Build them a website" if pitch == "website" else "AI automation for their business",
+        pitch_type=pitch_type,
         pitch_context=pitch_context,
     )
 
@@ -137,15 +149,33 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
     return _parse_email_json(raw)
 
 
-def draft_followup_email(company_name: str, prev_subject: str, prev_body: str, followup_num: int) -> dict:
+def draft_followup_email(company_name: str, prev_subject: str, prev_body: str, followup_num: int, pitch: str = "") -> dict:
     """Draft a follow-up email. Returns {"subject": str, "body": str}."""
     your_name = os.environ.get("YOUR_NAME", "Nishit")
+
+    if pitch == "website":
+        service_url = os.environ.get("WEBSITE_PORTFOLIO_URL", "")
+        sign_off = f"{your_name} — Max Web"
+        pitch_type = "web development (Max Web)"
+    else:
+        service_url = os.environ.get("AI_SITE_URL", "")
+        sign_off = f"{your_name} — Arkhe AI"
+        pitch_type = "AI automation (Arkhe AI)"
+
+    # Only include URL in follow-up 2 (email 3 in sequence)
+    if followup_num == 2 and service_url:
+        url_instruction = f'Naturally include this URL once in the body: {service_url}\nExample: "here\'s some of our recent work: {service_url}"'
+    else:
+        url_instruction = "Do NOT include any URLs or links in this email."
+
     prompt = FOLLOWUP_PROMPT.format(
         followup_num=followup_num,
         company_name=company_name,
         prev_subject=prev_subject,
         prev_body=prev_body[:500],
-        your_name=your_name,
+        pitch_type=pitch_type,
+        url_instruction=url_instruction,
+        sign_off=sign_off,
     )
     raw = call_llm(prompt)
     return _parse_email_json(raw)

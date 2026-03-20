@@ -173,7 +173,8 @@ def cmd_followups():
 
         try:
             draft = draft_followup_email(
-                rec["company_name"], prev_subject, prev_body, int(email_num)
+                rec["company_name"], prev_subject, prev_body, int(email_num),
+                pitch=rec.get("pitch", "")
             )
             drafts.append({
                 "id": rec["id"],
