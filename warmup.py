@@ -77,7 +77,7 @@ def get_daily_limit() -> int:
         return 50
 
 
-def send_warmup_email(from_addr: str, from_pass: str, to_addr: str, smtp_host: str = "smtp.gmail.com") -> str:
+def send_warmup_email(from_addr: str, smtp_user: str, smtp_pass: str, to_addr: str, smtp_host: str = "smtp.gmail.com") -> str:
     subject = random.choice(SUBJECTS)
     body = random.choice(BODIES)
     msg_id = make_msgid(domain=from_addr.split("@")[-1])
@@ -89,27 +89,34 @@ def send_warmup_email(from_addr: str, from_pass: str, to_addr: str, smtp_host: s
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = msg_id
 
-    with smtplib.SMTP_SSL(smtp_host, 465) as server:
-        server.login(from_addr, from_pass)
-        server.sendmail(from_addr, [to_addr], msg.as_string())
+    # Brevo uses port 587 (STARTTLS), Gmail uses 465 (SSL)
+    if "brevo.com" in smtp_host:
+        with smtplib.SMTP(smtp_host, 587) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_addr, [to_addr], msg.as_string())
+    else:
+        with smtplib.SMTP_SSL(smtp_host, 465) as server:
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(from_addr, [to_addr], msg.as_string())
 
     return msg_id
 
 
 def rescue_and_reply(
-    inbox_addr: str, inbox_pass: str,
-    reply_to_addr: str, reply_to_pass: str,
+    inbox_addr: str, inbox_imap_user: str, inbox_imap_pass: str,
+    reply_from_addr: str, reply_smtp_user: str, reply_smtp_pass: str,
     imap_host: str = "imap.gmail.com",
     smtp_host: str = "smtp.gmail.com",
 ) -> int:
     """Find warmup emails in spam/inbox, mark important, send reply."""
     replied = 0
     try:
-        with MailBox(imap_host).login(inbox_addr, inbox_pass) as mailbox:
+        with MailBox(imap_host).login(inbox_imap_user, inbox_imap_pass) as mailbox:
             # Check spam folder and rescue
             try:
                 mailbox.folder.set("[Gmail]/Spam")
-                spam_uids = list(mailbox.uids(AND(from_=reply_to_addr)))
+                spam_uids = list(mailbox.uids(AND(from_=reply_from_addr)))
                 if spam_uids:
                     mailbox.move(spam_uids, "INBOX")
             except Exception:
@@ -117,7 +124,7 @@ def rescue_and_reply(
 
             # Check inbox for warmup emails
             mailbox.folder.set("INBOX")
-            msgs = list(mailbox.fetch(AND(from_=reply_to_addr, seen=False), limit=5, mark_seen=True))
+            msgs = list(mailbox.fetch(AND(from_=reply_from_addr, seen=False), limit=5, mark_seen=True))
 
             for msg in msgs:
                 # Mark as important/starred
@@ -126,18 +133,25 @@ def rescue_and_reply(
                 except Exception:
                     pass
 
-                # Send reply
+                # Send reply from inbox account
                 reply_body = random.choice(REPLY_BODIES)
                 reply_msg = MIMEText(reply_body, "plain", "utf-8")
                 reply_msg["Subject"] = f"Re: {msg.subject}"
                 reply_msg["From"] = inbox_addr
-                reply_msg["To"] = reply_to_addr
+                reply_msg["To"] = reply_from_addr
                 reply_msg["Date"] = formatdate(localtime=True)
                 reply_msg["In-Reply-To"] = msg.headers.get("message-id", [""])[0]
 
-                with smtplib.SMTP_SSL(smtp_host, 465) as server:
-                    server.login(inbox_addr, inbox_pass)
-                    server.sendmail(inbox_addr, [reply_to_addr], reply_msg.as_string())
+                # Brevo uses port 587 (STARTTLS), Gmail uses 465 (SSL)
+                if "brevo.com" in smtp_host:
+                    with smtplib.SMTP(smtp_host, 587) as server:
+                        server.starttls()
+                        server.login(reply_smtp_user, reply_smtp_pass)
+                        server.sendmail(inbox_addr, [reply_from_addr], reply_msg.as_string())
+                else:
+                    with smtplib.SMTP_SSL(smtp_host, 465) as server:
+                        server.login(reply_smtp_user, reply_smtp_pass)
+                        server.sendmail(inbox_addr, [reply_from_addr], reply_msg.as_string())
 
                 replied += 1
                 time.sleep(random.uniform(5, 15))
@@ -151,41 +165,75 @@ def rescue_and_reply(
 def run_warmup():
     load_dotenv()
 
-    main_addr = os.environ.get("GMAIL_ADDRESS")
-    main_pass = os.environ.get("GMAIL_APP_PASSWORD")
+    # Main account (nishit@arkheai.site) — sends via Brevo, receives via Gmail IMAP
+    main_addr = os.environ.get("GMAIL_ADDRESS")           # nishit@arkheai.site
+    main_smtp_host = os.environ.get("GMAIL_SMTP_HOST", "smtp-relay.brevo.com")
+    main_smtp_user = os.environ.get("BREVO_SMTP_USER", main_addr)
+    main_smtp_pass = os.environ.get("GMAIL_APP_PASSWORD")
+    main_imap_host = os.environ.get("GMAIL_IMAP_HOST", "imap.gmail.com")
+    main_imap_user = os.environ.get("GMAIL_IMAP_USER", main_addr)
+    main_imap_pass = os.environ.get("GMAIL_IMAP_PASSWORD", main_smtp_pass)
+
+    # Partner account (Gmail) — sends via Gmail SMTP, receives via Gmail IMAP
     partner_addr = os.environ.get("WARMUP_PARTNER_EMAIL")
     partner_pass = os.environ.get("WARMUP_PARTNER_PASSWORD")
+    partner_smtp_host = "smtp.gmail.com"
+    partner_imap_host = "imap.gmail.com"
 
-    if not all([main_addr, main_pass, partner_addr, partner_pass]):
+    if not all([main_addr, main_smtp_pass, partner_addr, partner_pass]):
         print("[Warmup] Missing credentials. Set GMAIL_ADDRESS, GMAIL_APP_PASSWORD, "
               "WARMUP_PARTNER_EMAIL, WARMUP_PARTNER_PASSWORD in .env")
         return
 
     daily_limit = get_daily_limit()
     print(f"[Warmup] Daily target: {daily_limit} warmup emails")
+    print(f"[Warmup] Main: {main_addr} via {main_smtp_host}")
+    print(f"[Warmup] Partner: {partner_addr} via {partner_smtp_host}")
 
     sent = 0
     for i in range(daily_limit):
         try:
-            # Alternate direction each send
             if i % 2 == 0:
-                from_addr, from_pass = main_addr, main_pass
+                # Main → Partner (send via Brevo)
+                from_addr = main_addr
+                smtp_user, smtp_pass, smtp_host = main_smtp_user, main_smtp_pass, main_smtp_host
                 to_addr = partner_addr
+                # Receiver is partner — check partner IMAP, reply via partner Gmail SMTP
+                recv_addr = partner_addr
+                recv_imap_user, recv_imap_pass = partner_addr, partner_pass
+                recv_imap_host = partner_imap_host
+                reply_smtp_user, reply_smtp_pass = partner_addr, partner_pass
+                reply_smtp_host = partner_smtp_host
             else:
-                from_addr, from_pass = partner_addr, partner_pass
+                # Partner → Main (send via Gmail)
+                from_addr = partner_addr
+                smtp_user, smtp_pass, smtp_host = partner_addr, partner_pass, partner_smtp_host
                 to_addr = main_addr
+                # Receiver is main — check main IMAP, reply via Brevo
+                recv_addr = main_addr
+                recv_imap_user, recv_imap_pass = main_imap_user, main_imap_pass
+                recv_imap_host = main_imap_host
+                reply_smtp_user, reply_smtp_pass = main_smtp_user, main_smtp_pass
+                reply_smtp_host = main_smtp_host
 
             print(f"  [{i+1}/{daily_limit}] Sending warmup: {from_addr} → {to_addr}")
-            send_warmup_email(from_addr, from_pass, to_addr)
+            send_warmup_email(from_addr, smtp_user, smtp_pass, to_addr, smtp_host)
             sent += 1
 
             # Wait and then rescue + reply
             wait = random.uniform(30, 90)
             time.sleep(wait)
 
-            replied = rescue_and_reply(to_addr,
-                                       main_pass if to_addr == main_addr else partner_pass,
-                                       from_addr, from_pass)
+            replied = rescue_and_reply(
+                inbox_addr=recv_addr,
+                inbox_imap_user=recv_imap_user,
+                inbox_imap_pass=recv_imap_pass,
+                reply_from_addr=from_addr,
+                reply_smtp_user=reply_smtp_user,
+                reply_smtp_pass=reply_smtp_pass,
+                imap_host=recv_imap_host,
+                smtp_host=reply_smtp_host,
+            )
             if replied:
                 print(f"  [Warmup] Replied to {replied} warmup email(s)")
 

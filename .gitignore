@@ -15,5 +15,8 @@ venv/
 dist/
 build/
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store

@@ -169,9 +169,9 @@ def _validate_email_draft(draft: dict, email_num: int = 1) -> list[str]:
 
     # CTA check (email 1 only — follow-ups like breakup emails don't need a question)
     if email_num == 1:
-        sentences = [s.strip() for s in re.split(r'[.!?\n]', body) if s.strip()]
-        last_few = sentences[-3:] if len(sentences) >= 3 else sentences
-        if not any("?" in s for s in last_few):
+        # Check if a question mark appears in the last ~200 chars of the body
+        tail = body[-200:] if len(body) > 200 else body
+        if "?" not in tail:
             warnings.append("No question/CTA found near end of email")
 
     # No links in email 1

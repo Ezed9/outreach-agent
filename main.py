@@ -2,7 +2,7 @@
 Outreach Agent — entry point.
 
 Usage:
-  python main.py leads_gyms_sydney.csv        # Draft + review + send
+  python main.py leads_gyms_sydney.csv        # Draft + send (automatic)
   python main.py leads_*.csv                  # Multiple CSVs
   python main.py --follow-ups                 # Send due follow-ups
   python main.py --follow-ups --campaign gyms # Follow-ups for one campaign only
@@ -20,9 +20,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.table import Table
 
 load_dotenv()
 console = Console()
+
+MAX_WARNINGS_TO_SEND = 1  # Drafts with more warnings than this get auto-skipped
 
 
 def load_leads_from_csv(filepath: str) -> list[dict]:
@@ -50,12 +53,49 @@ def load_leads_from_csv(filepath: str) -> list[dict]:
     return leads
 
 
+def _auto_approve(drafts: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Split drafts into (to_send, to_skip) based on validation warnings and print summary."""
+    to_send, to_skip = [], []
+    for d in drafts:
+        if not d.get("to_email"):
+            d["_skip_reason"] = "no email"
+            to_skip.append(d)
+        elif len(d.get("warnings", [])) > MAX_WARNINGS_TO_SEND:
+            d["_skip_reason"] = f"{len(d['warnings'])} warnings"
+            to_skip.append(d)
+        else:
+            to_send.append(d)
+
+    table = Table(title="Draft Summary", show_lines=True)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Company", style="cyan")
+    table.add_column("Pitch", style="magenta")
+    table.add_column("Subject")
+    table.add_column("Words", justify="right")
+    table.add_column("Warnings", justify="right")
+    table.add_column("Action")
+
+    for i, d in enumerate(drafts, 1):
+        words = str(len(d.get("body", "").split()))
+        warn_count = str(len(d.get("warnings", [])))
+        if d in to_send:
+            action = "[green]SEND[/green]"
+        else:
+            action = f"[yellow]SKIP: {d.get('_skip_reason', '?')}[/yellow]"
+        table.add_row(str(i), d["company_name"], d.get("pitch", ""), d.get("subject", ""), words, warn_count, action)
+
+    console.print()
+    console.print(table)
+    console.print(f"\n[bold]{len(to_send)} to send, {len(to_skip)} skipped[/bold]\n")
+    return to_send, to_skip
+
+
 def cmd_send(csv_paths: list[str]):
     from outreach import (
         load_tracker, save_tracker, upsert_lead,
         mark_sent, mark_skipped, remaining_today,
         research_and_draft, draft_followup_email,
-        review_batch, send_email,
+        send_email,
     )
 
     tracker = load_tracker()
@@ -95,6 +135,20 @@ def cmd_send(csv_paths: list[str]):
     drafts = []
     for i, lead in enumerate(new_leads, 1):
         console.print(f"\n[bold cyan][{i}/{len(new_leads)}] {lead['company_name']}[/bold cyan]")
+
+        # Early email check: if no email in CSV, research website first to find one
+        if not lead["email"] and lead["website"]:
+            from tools.website_researcher import research_business as _quick_research
+            console.print(f"  [dim]No email in CSV — checking website...[/dim]")
+            quick_res = _quick_research(lead["website"], lead["company_name"])
+            found_email = _extract_email_from_research(quick_res)
+            if found_email:
+                lead["email"] = found_email
+                console.print(f"  [green]Found email: {found_email}[/green]")
+            else:
+                console.print(f"  [yellow]⚠ No email found — skipping {lead['company_name']}[/yellow]")
+                continue
+
         try:
             pitch, research, email_draft = research_and_draft(
                 lead["company_name"],
@@ -128,19 +182,22 @@ def cmd_send(csv_paths: list[str]):
         console.print("[red]No drafts generated.[/red]")
         return
 
-    # Batch review
-    approved = review_batch(drafts)
+    # Auto-approve based on validation warnings
+    to_send, to_skip = _auto_approve(drafts)
 
-    if not approved:
+    # Mark skipped drafts
+    for draft in to_skip:
+        mark_skipped(tracker, draft["id"])
+
+    if not to_send:
+        save_tracker(tracker)
+        console.print("[yellow]No emails passed validation. Run --status to see skipped leads.[/yellow]")
         return
 
-    # Send approved emails
+    # Send emails
     tracker = load_tracker()
     sent_count = 0
-    for draft in approved:
-        if not draft["to_email"]:
-            console.print(f"[yellow]Skipping {draft['company_name']} — no email address found[/yellow]")
-            continue
+    for draft in to_send:
         try:
             console.print(f"  Sending to {draft['to_email']}...")
             message_id = send_email(draft["to_email"], draft["subject"], draft["body"])
@@ -156,11 +213,14 @@ def cmd_send(csv_paths: list[str]):
 
 def cmd_followups(campaign: str = ""):
     from outreach import (
-        load_tracker, save_tracker, mark_sent,
+        load_tracker, save_tracker, mark_sent, mark_skipped,
         get_due_followups, send_email, remaining_today,
     )
     from outreach.drafter import draft_followup_email
-    from outreach.reviewer import review_batch
+
+    # Check for replies first to avoid following up on leads that already replied
+    console.print("[dim]Checking for replies before sending follow-ups...[/dim]")
+    cmd_check_replies()
 
     tracker = load_tracker()
     due = get_due_followups(tracker, campaign=campaign)
@@ -199,10 +259,18 @@ def cmd_followups(campaign: str = ""):
         except Exception as e:
             console.print(f"[red]Error drafting follow-up for {rec['company_name']}: {e}[/red]")
 
-    approved = review_batch(drafts)
+    if not drafts:
+        console.print("[red]No follow-up drafts generated.[/red]")
+        return
+
+    # Auto-approve based on validation warnings
+    to_send, to_skip = _auto_approve(drafts)
+
+    for draft in to_skip:
+        mark_skipped(tracker, draft["id"])
 
     sent_count = 0
-    for draft in approved:
+    for draft in to_send:
         try:
             message_id = send_email(draft["to_email"], draft["subject"], draft["body"])
             mark_sent(tracker, draft["id"], draft["_email_num"],
