@@ -14,7 +14,7 @@ pip install -r requirements.txt
 # Core workflow
 python main.py leads_gyms_sydney.csv          # Draft + send (automatic)
 python main.py leads_*.csv                     # Multiple CSVs via glob
-python main.py --follow-ups                    # Send due follow-ups
+python main.py --follow-ups                    # Send due follow-ups (also: --followups)
 python main.py --follow-ups --campaign gyms    # Follow-ups for one campaign only
 python main.py --status                        # Show tracker table
 python main.py --campaigns                     # Show campaign summary
@@ -26,6 +26,8 @@ python warmup.py                               # Email warmup (run daily for 4 w
 python scripts/setup_check.py                  # Pre-flight check (SMTP, DNS, LLM keys)
 python test_send.py                            # Send one test email + log in tracker (for testing reply detection)
 ```
+
+No test suite exists — there are no unit or integration tests in the repo.
 
 ## Environment Variables
 
@@ -60,12 +62,19 @@ main.py                          Entry point, CLI arg parsing, orchestrates full
 
 **Main flow** (`main.py`):
 1. Load leads from CSV → filter to those with email OR website
-2. For each new lead: `drafter.py` researches the business → decides pitch → writes personalised email
-3. Auto-approve: drafts with 0–1 warnings send automatically, 2+ warnings get skipped
-4. `sender.py` sends emails via Gmail SMTP, logs Message-ID
-5. `tracker.py` saves state to `outreach_tracker.json`
-6. `reply_checker.py` checks IMAP for replies when running `--check-replies` or `--follow-ups`
-7. Follow-ups are drafted + sent for leads with no reply after 3/7/14/21 days
+2. If lead has no email but has website, scrapes the website for a contact email (`_extract_email_from_research`)
+3. For each new lead: `drafter.py` researches the business → decides pitch → writes personalised email
+4. Auto-approve: drafts with 0–1 warnings send automatically, 2+ warnings get skipped (`MAX_WARNINGS_TO_SEND`)
+5. `sender.py` sends emails via Gmail SMTP, logs Message-ID
+6. `tracker.py` saves state to `outreach_tracker.json`
+7. `reply_checker.py` checks IMAP for replies when running `--check-replies` or `--follow-ups` (follow-ups check replies first to avoid emailing leads that already responded)
+8. Follow-ups are drafted + sent for leads with no reply after 3/7/14/21 days
+
+**Imports**: `outreach/__init__.py` re-exports all public functions from drafter, sender, and tracker — most code imports from `outreach` directly rather than submodules.
+
+**Campaign names**: derived from the CSV filename stem (e.g. `filtered_leads_gyms_sydney_2026-03-19`).
+
+**Lead dedup**: tracker keys are MD5 hashes of `company_name|website` (lowercase, first 12 chars). Re-running the same CSV skips already-tracked leads.
 
 **Status lifecycle** (in `models.py`): `pending` → `sent` → `replied` | `skipped` | `exhausted` (after 5 emails with no reply)
 
@@ -128,11 +137,16 @@ python main.py /Users/nishit/Desktop/leads-agent/output/filtered_leads_hair_salo
 - `.sent_count.json` — daily send counter
 - `.warmup_start` — warmup start date marker
 
-## Before You Send a Single Email (Checklist)
+## Pre-send Checklist
 
-1. Buy a secondary .com domain — never use personal Gmail
-2. Set SPF, DKIM, DMARC DNS records
-3. Run `warmup.py` daily for 4 weeks
-4. Test at mail-tester.com — score must be 9+/10
-5. Add domain to Google Postmaster Tools
-6. Run `python main.py --verify <csv>` before each campaign
+1. Secondary .com domain (not personal Gmail), SPF/DKIM/DMARC configured
+2. `warmup.py` run daily for 4 weeks, mail-tester.com score 9+/10
+3. Domain added to Google Postmaster Tools
+4. `python main.py --verify <csv>` before each campaign
+
+## Gotchas
+
+- `sender.py` has a pre-send safety check that rejects emails containing terminal box-drawing characters (corrupted copy-paste from Rich tables)
+- LLM JSON parsing in `drafter.py` has 4 fallback strategies: valid JSON → regex extraction → Subject: line detection → raw text. If the LLM returns malformed JSON, the email still gets drafted but may have quality issues.
+- `.sent_count.json` resets daily by date — if the process crashes mid-batch, the count is still accurate because it persists after each individual send
+- `warmup.py` requires a `WARMUP_PARTNER_EMAIL` / `WARMUP_PARTNER_PASSWORD` (a second Gmail account you control)

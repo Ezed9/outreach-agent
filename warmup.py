@@ -15,9 +15,11 @@ Schedule:
   Week 4: 50 sends/day
 """
 
+import json
 import os
 import random
 import smtplib
+import sys
 import time
 from datetime import date
 from email.mime.text import MIMEText
@@ -25,6 +27,63 @@ from email.utils import make_msgid, formatdate
 
 from dotenv import load_dotenv
 from imap_tools import MailBox, MailMessageFlags, AND
+
+WARMUP_LOG = ".warmup_log.json"
+
+
+def load_log() -> list[dict]:
+    if os.path.exists(WARMUP_LOG):
+        with open(WARMUP_LOG) as f:
+            return json.load(f)
+    return []
+
+
+def append_log(entry: dict) -> None:
+    log = load_log()
+    # Replace existing entry for same date
+    log = [e for e in log if e["date"] != entry["date"]]
+    log.append(entry)
+    log.sort(key=lambda e: e["date"])
+    with open(WARMUP_LOG, "w") as f:
+        json.dump(log, f, indent=2)
+
+
+def show_status() -> None:
+    log = load_log()
+    if not os.path.exists(".warmup_start"):
+        print("[Warmup] No warmup started yet.")
+        return
+
+    with open(".warmup_start") as f:
+        start = date.fromisoformat(f.read().strip())
+
+    today = date.today()
+    total_days = (today - start).days + 1
+
+    print(f"\nWarmup tracker — started {start} (day {total_days}/28)")
+    print(f"{'Day':<5} {'Date':<12} {'Week':<6} {'Target':<8} {'Sent':<6} {'Status'}")
+    print("-" * 52)
+
+    logged = {e["date"]: e for e in log}
+    for day_offset in range(28):
+        d = date.fromordinal(start.toordinal() + day_offset)
+        day_num = day_offset + 1
+        week = (day_offset // 7) + 1
+        target = [5, 15, 30, 50][day_offset // 7]
+        ds = d.isoformat()
+
+        if d > today:
+            print(f"{day_num:<5} {ds:<12} {week:<6} {target:<8} {'–':<6} upcoming")
+        elif ds in logged:
+            e = logged[ds]
+            sent = e["sent"]
+            status = "✓" if sent >= target else f"partial ({sent}/{target})"
+            print(f"{day_num:<5} {ds:<12} {week:<6} {target:<8} {sent:<6} {status}")
+        else:
+            marker = "← today" if d == today else "missed"
+            print(f"{day_num:<5} {ds:<12} {week:<6} {target:<8} {'0':<6} {marker}")
+
+    print()
 
 load_dotenv()
 
@@ -245,6 +304,21 @@ def run_warmup():
 
     print(f"\n[Warmup] Done. Sent {sent}/{daily_limit} warmup emails today.")
 
+    with open(".warmup_start") as f:
+        start = date.fromisoformat(f.read().strip())
+    day_num = (date.today() - start).days + 1
+
+    append_log({
+        "date": date.today().isoformat(),
+        "day": day_num,
+        "week": (day_num - 1) // 7 + 1,
+        "target": daily_limit,
+        "sent": sent,
+    })
+
 
 if __name__ == "__main__":
-    run_warmup()
+    if len(sys.argv) > 1 and sys.argv[1] == "--status":
+        show_status()
+    else:
+        run_warmup()
