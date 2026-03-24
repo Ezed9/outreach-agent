@@ -14,7 +14,6 @@ Usage:
 
 import csv
 import glob
-import os
 import sys
 from pathlib import Path
 
@@ -94,14 +93,14 @@ def cmd_send(csv_paths: list[str]):
     from outreach import (
         load_tracker, save_tracker, upsert_lead,
         mark_sent, mark_skipped, remaining_today,
-        research_and_draft, draft_followup_email,
-        send_email,
+        research_and_draft, send_email,
     )
 
     tracker = load_tracker()
 
     # Load all leads from CSVs
     all_leads = []
+    resolved_files: list[Path] = []
     for path in csv_paths:
         for filepath in glob.glob(path):
             campaign = Path(filepath).stem  # e.g. "filtered_leads_gyms_sydney_2026-03-19"
@@ -110,6 +109,7 @@ def cmd_send(csv_paths: list[str]):
             for lead in leads:
                 lead["campaign"] = campaign
             all_leads.extend(leads)
+            resolved_files.append(Path(filepath))
 
     if not all_leads:
         console.print("[red]No leads found. Check CSV file paths.[/red]")
@@ -139,7 +139,7 @@ def cmd_send(csv_paths: list[str]):
         # Early email check: if no email in CSV, research website first to find one
         if not lead["email"] and lead["website"]:
             from tools.website_researcher import research_business as _quick_research
-            console.print(f"  [dim]No email in CSV — checking website...[/dim]")
+            console.print("  [dim]No email in CSV — checking website...[/dim]")
             quick_res = _quick_research(lead["website"], lead["company_name"])
             found_email = _extract_email_from_research(quick_res)
             if found_email:
@@ -210,11 +210,19 @@ def cmd_send(csv_paths: list[str]):
     save_tracker(tracker)
     console.print(f"\n[bold green]✓ {sent_count} emails sent.[/bold green]")
 
+    # Move processed CSVs to a 'processed/' subfolder so they're not re-run accidentally
+    for f in resolved_files:
+        dest_dir = f.parent / "processed"
+        dest_dir.mkdir(exist_ok=True)
+        dest = dest_dir / f.name
+        f.rename(dest)
+        console.print(f"[dim]Moved {f.name} → processed/[/dim]")
+
 
 def cmd_followups(campaign: str = ""):
     from outreach import (
         load_tracker, save_tracker, mark_sent, mark_skipped,
-        get_due_followups, send_email, remaining_today,
+        get_due_followups, send_email,
     )
     from outreach.drafter import draft_followup_email
 
