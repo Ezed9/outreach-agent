@@ -134,6 +134,88 @@ Return ONLY valid JSON:
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
+_WEBSITE_SIGNAL_HINTS = (
+    "no website",
+    "website unreachable",
+    "very thin website content",
+    "wordpress site — may need redesign",
+    "wix template site — limited customization",
+    "squarespace template site",
+    "copyright outdated",
+)
+
+_AI_SIGNAL_HINTS = (
+    "no online booking system",
+    "no automation tools detected",
+)
+
+
+def _rule_based_pitch_decision(website: str, research: dict) -> tuple[str, int]:
+    """Heuristic decision to prevent one-brand drift when LLM output is noisy."""
+    website_score = 0
+    ai_score = 0
+    signals = [s.lower() for s in research.get("signals", [])]
+    combined_signals = " | ".join(signals)
+
+    has_website = bool(website) and bool(research.get("has_website"))
+    if not has_website:
+        return "website", 100
+
+    if any(hint in combined_signals for hint in _WEBSITE_SIGNAL_HINTS):
+        website_score += 3
+    if "no social media presence found" in combined_signals:
+        website_score += 1
+
+    if any(hint in combined_signals for hint in _AI_SIGNAL_HINTS):
+        ai_score += 3
+    if "has review platform presence" in combined_signals or "actively hiring — business is growing" in combined_signals:
+        ai_score += 1
+    if len((research.get("main_content") or "").strip()) > 1200:
+        ai_score += 1
+
+    if website_score > ai_score:
+        return "website", website_score - ai_score
+    if ai_score > website_score:
+        return "ai_automation", ai_score - website_score
+    return "website", 0
+
+
+def _parse_pitch_choice(raw: str) -> str:
+    """Parse LLM output into a strict 'website' or 'ai_automation' label."""
+    text = (raw or "").strip().lower()
+    if not text:
+        return ""
+
+    if text in {"website", '"website"'}:
+        return "website"
+    if text in {"ai_automation", "ai automation", '"ai_automation"', '"ai automation"'}:
+        return "ai_automation"
+
+    quoted_match = re.search(r'"(website|ai[_\s-]?automation)"', text)
+    if quoted_match:
+        choice = quoted_match.group(1).replace(" ", "_").replace("-", "_")
+        return "ai_automation" if choice == "ai_automation" else "website"
+
+    website_mentions = re.findall(r"\bwebsite\b", text)
+    ai_mentions = re.findall(r"\bai[_\s-]?automation\b", text)
+    if website_mentions and not ai_mentions:
+        return "website"
+    if ai_mentions and not website_mentions:
+        return "ai_automation"
+    return ""
+
+
+def _resolve_pitch_for_followup(pitch: str, prev_body: str) -> str:
+    """Resolve pitch for follow-ups when old tracker entries have empty pitch."""
+    if pitch in {"website", "ai_automation"}:
+        return pitch
+    prev_lower = (prev_body or "").lower()
+    if "max web" in prev_lower:
+        return "website"
+    if "arkhe ai" in prev_lower:
+        return "ai_automation"
+    return "ai_automation"
+
 def _validate_email_draft(draft: dict, email_num: int = 1) -> list[str]:
     """Validate a drafted email. Returns list of warning strings (empty = all good)."""
     warnings = []
@@ -186,6 +268,10 @@ def _validate_email_draft(draft: dict, email_num: int = 1) -> list[str]:
 
 def decide_pitch(company_name: str, website: str, description: str, research: dict) -> str:
     """Returns 'website' or 'ai_automation'."""
+    rule_pitch, confidence = _rule_based_pitch_decision(website, research)
+    if confidence >= 2:
+        return rule_pitch
+
     content_summary = (research.get("main_content", "") or "")[:800]
     signals = ", ".join(research.get("signals", [])) or "none detected"
 
@@ -196,10 +282,10 @@ def decide_pitch(company_name: str, website: str, description: str, research: di
         content_summary=content_summary,
         signals=signals,
     )
-    result = call_llm(prompt).strip().lower()
-    if "ai_automation" in result or "automation" in result:
-        return "ai_automation"
-    return "website"
+    llm_choice = _parse_pitch_choice(call_llm(prompt))
+    if llm_choice:
+        return llm_choice
+    return rule_pitch
 
 
 def draft_initial_email(company_name: str, website: str, description: str, pitch: str, research: dict) -> dict:
@@ -268,8 +354,9 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
 def draft_followup_email(company_name: str, prev_subject: str, prev_body: str, followup_num: int, pitch: str = "") -> dict:
     """Draft a follow-up email. Returns {"subject": str, "body": str, "warnings": list}."""
     your_name = os.environ.get("YOUR_NAME", "Nishit")
+    resolved_pitch = _resolve_pitch_for_followup(pitch, prev_body)
 
-    if pitch == "website":
+    if resolved_pitch == "website":
         service_url = os.environ.get("WEBSITE_PORTFOLIO_URL", "")
         sign_off = f"{your_name} — Max Web"
         pitch_type = "web development (Max Web)"
