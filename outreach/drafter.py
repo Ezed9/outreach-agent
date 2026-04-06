@@ -24,17 +24,6 @@ SPAM_WORDS = [
 
 # ── Prompts ─────────────────────────────────────────────────────────────────
 
-DECIDE_PITCH_PROMPT = """You are a B2B sales strategist. Based on this business profile, decide whether to pitch:
-- "website" — if they have NO website, or a very basic one with no online presence
-- "ai_automation" — if they have a website but clearly lack automation (no booking system, no AI chatbot, manual processes)
-
-Business: {company_name}
-Website: {website}
-Description: {description}
-Website content summary: {content_summary}
-Signals detected: {signals}
-
-Reply with ONLY one word: either "website" or "ai_automation"."""
 
 
 DRAFT_EMAIL_PROMPT = """You are an expert cold email copywriter helping a freelancer named {your_name} reach out to local Australian businesses.
