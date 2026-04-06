@@ -192,22 +192,7 @@ def _validate_email_draft(draft: dict, email_num: int = 1) -> list[str]:
 
 # ── Main drafting functions ──────────────────────────────────────────────────
 
-def decide_pitch(company_name: str, website: str, description: str, research: dict) -> str:
-    """Returns 'website' or 'ai_automation'."""
-    return "website"
-    content_summary = (research.get("main_content", "") or "")[:800]
-    signals = ", ".join(research.get("signals", [])) or "none detected"
-
-    prompt = DECIDE_PITCH_PROMPT.format(
-        company_name=company_name,
-        website=website or "none",
-        description=description,
-        content_summary=content_summary,
-        signals=signals,
-    )
-    result = call_llm(prompt).strip().lower()
-    if "ai_automation" in result or "automation" in result:
-        return "ai_automation"
+def decide_pitch(company_name: str, website: str | None, description: str, research: dict) -> str:
     return "website"
 
 
@@ -238,7 +223,7 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
         )
 
     pagespeed_api_key = os.getenv("PAGESPEED_API_KEY", "")
-    pagespeed_data = get_pagespeed_score(website, pagespeed_api_key) if website else None
+    pagespeed_data = get_pagespeed_score(website, pagespeed_api_key) if website and pagespeed_api_key else None
     if pagespeed_data:
         score = pagespeed_data["score"]
         issues = pagespeed_data.get("top_issues", [])
