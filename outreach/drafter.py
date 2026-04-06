@@ -215,9 +215,11 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
     pagespeed_data = get_pagespeed_score(website, pagespeed_api_key) if website and pagespeed_api_key else None
     if pagespeed_data:
         score = pagespeed_data["score"]
+        load_time = pagespeed_data.get("load_time_seconds", 0.0)
         issues = pagespeed_data.get("top_issues", [])
-        issues_str = ", ".join(issues[:2]) if issues else "slow load time and poor mobile experience"
-        pagespeed_hook = f"PageSpeed score: {score}/100 on mobile. Top issues: {issues_str}."
+        issues_str = ", ".join(issues) if issues else "slow load time and poor mobile experience"
+        load_str = f" Load time: {load_time}s." if load_time > 0 else ""
+        pagespeed_hook = f"PageSpeed score: {score}/100 on mobile.{load_str} Top issues: {issues_str}."
     else:
         pagespeed_hook = ""
 
