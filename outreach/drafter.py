@@ -10,7 +10,7 @@ import os
 import re
 
 from agent import call_llm
-from tools.website_researcher import research_business
+from tools.website_researcher import get_pagespeed_score, research_business
 
 
 # ── Spam word blocklist ──────────────────────────────────────────────────────
@@ -24,17 +24,6 @@ SPAM_WORDS = [
 
 # ── Prompts ─────────────────────────────────────────────────────────────────
 
-DECIDE_PITCH_PROMPT = """You are a B2B sales strategist. Based on this business profile, decide whether to pitch:
-- "website" — if they have NO website, or a very basic one with no online presence
-- "ai_automation" — if they have a website but clearly lack automation (no booking system, no AI chatbot, manual processes)
-
-Business: {company_name}
-Website: {website}
-Description: {description}
-Website content summary: {content_summary}
-Signals detected: {signals}
-
-Reply with ONLY one word: either "website" or "ai_automation"."""
 
 
 DRAFT_EMAIL_PROMPT = """You are an expert cold email copywriter helping a freelancer named {your_name} reach out to local Australian businesses.
@@ -45,13 +34,20 @@ Website: {website}
 What they do: {description}
 Key signals: {signals}
 Website content: {content_summary}
+PageSpeed data (mobile): {pagespeed_hook}
 
 ## Pitch Type
 You are pitching: {pitch_type}
 {pitch_context}
 
-## Framework (choose the best fit for this lead — do NOT name the framework in the email)
-Pick ONE of these structures:
+## Email 1 Structure
+When PageSpeed data is available (pagespeed_hook is not empty), use this structure:
+1. Hook: state the real score ("your site scores X/100 on mobile") — specific and verifiable
+2. Pain: what it costs (visitors leave before seeing services, mobile traffic is wasted)
+3. Credibility: "I recently redesigned a jewellery brand's site — they got more enquiries and customers started perceiving them as a premium brand"
+4. CTA: low friction — "want me to send over the 3 specific things dragging your score down?" (yes/no answer, no calendar, no commitment)
+
+When no PageSpeed data is available, use existing research signals (outdated copyright year, WordPress/Wix/Squarespace detection) as the hook instead. Pick ONE of these fallback structures:
 - AIDA: specific observation about them → insight that sparks interest → outcome they'd desire → clear ask
 - PAS: name a pain they likely have → show consequences of ignoring it → present your solution
 - BAB: describe their current situation → paint the better situation → bridge with what you offer
@@ -66,9 +62,10 @@ Pick ONE of these structures:
 - Do NOT start with "I noticed..." or "I came across..." — be more creative
 - End with ONE clear question as your CTA. Pick the most natural style:
   - Binary: "Would this be useful for {company_name}?"
-  - Specific time: "Open to a 15-min call Tues or Wed?"
   - Permission: "Mind if I send over how this would work for you?"
-  Do NOT use: "Worth a chat?", "Let me know", "Would love to connect", "Thoughts?"
+  - Specific: "want me to send over the 3 specific things dragging your score down?"
+  Do NOT use: "Worth a chat?", "Let me know", "Would love to connect", "Thoughts?", "Open to a 15-min call?"
+- Use only real, verifiable data. The jewellery case study above is the credibility proof — do not invent percentage statistics.
 - NO spam words: free, guaranteed, risk-free, limited time, act now, click here, discount, exclusive
 - Sign off with: {sign_off}
 - Do NOT include your email, phone, or any URLs in the body
@@ -184,21 +181,7 @@ def _validate_email_draft(draft: dict, email_num: int = 1) -> list[str]:
 
 # ── Main drafting functions ──────────────────────────────────────────────────
 
-def decide_pitch(company_name: str, website: str, description: str, research: dict) -> str:
-    """Returns 'website' or 'ai_automation'."""
-    content_summary = (research.get("main_content", "") or "")[:800]
-    signals = ", ".join(research.get("signals", [])) or "none detected"
-
-    prompt = DECIDE_PITCH_PROMPT.format(
-        company_name=company_name,
-        website=website or "none",
-        description=description,
-        content_summary=content_summary,
-        signals=signals,
-    )
-    result = call_llm(prompt).strip().lower()
-    if "ai_automation" in result or "automation" in result:
-        return "ai_automation"
+def decide_pitch(company_name: str, website: str | None, description: str, research: dict) -> str:
     return "website"
 
 
@@ -214,7 +197,8 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
         pitch_context = (
             "You're reaching out on behalf of Max Web. Mention 'I run Max Web' once naturally in the email. "
             "Focus on: getting found on Google, looking credible online, converting visitors to bookings and enquiries. "
-            "Proof: generate a plausible outcome for a similar type of business (no specific company names). "
+            "Case study (use in email 1 body): \"I recently redesigned a jewellery brand's site — they got more enquiries and customers started perceiving them as a premium brand\". "
+            "Do NOT invent percentage statistics — use only the case study above as your credibility proof. "
             "Do NOT include any URLs or links — email 1 must be completely link-free."
         )
     else:
@@ -227,6 +211,18 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
             "Do NOT include any URLs or links — email 1 must be completely link-free."
         )
 
+    pagespeed_api_key = os.getenv("PAGESPEED_API_KEY", "")
+    pagespeed_data = get_pagespeed_score(website, pagespeed_api_key) if website and pagespeed_api_key else None
+    if pagespeed_data:
+        score = pagespeed_data["score"]
+        load_time = pagespeed_data.get("load_time_seconds", 0.0)
+        issues = pagespeed_data.get("top_issues", [])
+        issues_str = ", ".join(issues) if issues else "slow load time and poor mobile experience"
+        load_str = f" Load time: {load_time}s." if load_time > 0 else ""
+        pagespeed_hook = f"PageSpeed score: {score}/100 on mobile.{load_str} Top issues: {issues_str}."
+    else:
+        pagespeed_hook = ""
+
     prompt = DRAFT_EMAIL_PROMPT.format(
         your_name=your_name,
         sign_off=sign_off,
@@ -238,6 +234,7 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
         content_summary=content_summary,
         pitch_type=pitch_type,
         pitch_context=pitch_context,
+        pagespeed_hook=pagespeed_hook,
     )
 
     raw = call_llm(prompt)
@@ -247,7 +244,7 @@ def draft_initial_email(company_name: str, website: str, description: str, pitch
     warnings = _validate_email_draft(draft, email_num=1)
     if warnings:
         retry_prompt = (
-            f"The email you wrote has these issues:\n"
+            "The email you wrote has these issues:\n"
             + "\n".join(f"- {w}" for w in warnings)
             + "\n\nRewrite fixing ONLY these issues. Keep everything else identical.\n"
             "Return ONLY valid JSON: {\"subject\": \"...\", \"body\": \"...\"}"
@@ -304,7 +301,7 @@ def draft_followup_email(company_name: str, prev_subject: str, prev_body: str, f
     warnings = _validate_email_draft(draft, email_num=followup_num)
     if warnings:
         retry_prompt = (
-            f"The email you wrote has these issues:\n"
+            "The email you wrote has these issues:\n"
             + "\n".join(f"- {w}" for w in warnings)
             + "\n\nRewrite fixing ONLY these issues. Keep everything else identical.\n"
             "Return ONLY valid JSON: {\"subject\": \"...\", \"body\": \"...\"}"
@@ -334,7 +331,7 @@ def research_and_draft(company_name: str, website: str, email: str, description:
     print(f"  [Research] Scraping {website or '(no website)'}...")
     research = research_business(website, company_name) if website else {"signals": ["no website"], "main_content": "", "sub_pages": ""}
 
-    print(f"  [Pitch]    Deciding pitch...")
+    print("  [Pitch]    Deciding pitch...")
     pitch = decide_pitch(company_name, website, description, research)
 
     print(f"  [Draft]    Writing {pitch} email...")

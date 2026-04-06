@@ -168,3 +168,44 @@ def research_business(url: str, company_name: str = "") -> dict:
         result["signals"].append("has review platform presence")
 
     return result
+
+
+def get_pagespeed_score(url: str, api_key: str) -> dict | None:
+    if not api_key:
+        return None
+    try:
+        resp = httpx.get(
+            "https://www.googleapis.com/pagespeedonline/v5/runPagespeed",
+            params={"url": url, "strategy": "mobile", "key": api_key},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        lighthouse = data.get("lighthouseResult")
+        if not lighthouse:
+            return None
+        score = int(lighthouse["categories"]["performance"]["score"] * 100)
+
+        load_time = 0.0
+        interactive = lighthouse["audits"].get("interactive", {})
+        display_value = interactive.get("displayValue", "")
+        match = re.search(r"[\d.]+", display_value)
+        if match:
+            try:
+                load_time = float(match.group(0))
+            except ValueError:
+                load_time = 0.0
+
+        audits = lighthouse["audits"]
+        scored_audits = [
+            (v["score"], v["title"])
+            for v in audits.values()
+            if v.get("score") is not None and isinstance(v.get("score"), (int, float))
+            and v.get("scoreDisplayMode") not in ("manual", "notApplicable", "informative")
+        ]
+        scored_audits.sort(key=lambda x: x[0])
+        top_issues = [title for _, title in scored_audits[:3]]
+
+        return {"score": score, "load_time_seconds": load_time, "top_issues": top_issues}
+    except Exception:
+        return None

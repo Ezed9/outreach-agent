@@ -131,6 +131,12 @@ Expected CSV columns: `company_name, score, source, description, website, email,
 python main.py /Users/nishit/Desktop/leads-agent/output/filtered_leads_hair_salons_and_barbershops_in_Perth_Aus_2026-03-19.csv
 ```
 
+**Target niches**: dentists, physios, chiropractors, lawyers, accountants, tradies, plumbers, electricians (AU local service businesses with consistent revenue, outdated websites, high client LTV)
+
+**Avoid**: design agencies, graphic studios, SaaS companies, B2B lead gen agencies, video production — these are flooded with cold email and have polished websites
+
+**Arkhe AI pitch is paused** — all leads receive website pitch (Max Web) until a real AI automation case study exists
+
 ## Runtime Files (do not commit)
 
 - `outreach_tracker.json` — lead state + email history
