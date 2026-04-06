@@ -181,7 +181,9 @@ def get_pagespeed_score(url: str, api_key: str) -> dict | None:
         )
         resp.raise_for_status()
         data = resp.json()
-        lighthouse = data["lighthouseResult"]
+        lighthouse = data.get("lighthouseResult")
+        if not lighthouse:
+            return None
         score = int(lighthouse["categories"]["performance"]["score"] * 100)
 
         load_time = 0.0
@@ -199,6 +201,7 @@ def get_pagespeed_score(url: str, api_key: str) -> dict | None:
             (v["score"], v["title"])
             for v in audits.values()
             if v.get("score") is not None and isinstance(v.get("score"), (int, float))
+            and v.get("scoreDisplayMode") not in ("manual", "notApplicable", "informative")
         ]
         scored_audits.sort(key=lambda x: x[0])
         top_issues = [title for _, title in scored_audits[:3]]
